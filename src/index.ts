@@ -1,50 +1,87 @@
-// File: src/index.ts
-import fs from 'fs';
+// Normalized & Enhanced: src/index.ts
+// Version: 20250417
+// Summary: Main CLI entry point that runs a full MCP audit with scanning, validation, and reporting.
+
 import path from 'path';
-import { parseMcpRules, validateAgainstMcp } from './mcp';
-import { readReadmeGoals, validateAgainstReadme } from './readme';
 import { scanProjectFiles, findDuplicates } from './scanner';
-import { generateMarkdownReport } from './report';
+import { parseMcpRules, validateRulesAgainstFiles } from './mcp';
+import { extractGoalsFromReadme, validateGoalsAgainstFiles } from './readme';
+import { generateReport } from './report';
 
-interface AuditOptions {
-  projectPath: string;
-  output: 'markdown' | 'json';
-}
+const args = process.argv.slice(2);
+const projectPath = args[0] || process.cwd();
+const outputFormat = args.includes('--json') ? 'json' : 'markdown';
 
-export async function runAudit(options: AuditOptions) {
-  const { projectPath, output } = options;
+(async () => {
+  const allFiles = scanProjectFiles(projectPath);
+  const duplicates = findDuplicates(allFiles);
 
-  const mcpDir = path.join(projectPath, 'mcp-suite');
+  const mcpRules = parseMcpRules(path.join(projectPath, 'mcp-suite'));
+  const mcpResults = validateRulesAgainstFiles(mcpRules, allFiles);
+
   const readmePath = path.join(projectPath, 'README.md');
+  const declaredGoals = extractGoalsFromReadme(readmePath);
+  const goalResults = validateGoalsAgainstFiles(declaredGoals, allFiles);
 
-  const rules = parseMcpRules(mcpDir);
-  const readmeGoals = readReadmeGoals(readmePath);
-  const projectFiles = scanProjectFiles(projectPath);
-
-  const mcpResults = validateAgainstMcp(rules, projectFiles);
-  const readmeResults = validateAgainstReadme(readmeGoals, projectFiles);
-  const duplicateResults = findDuplicates(projectFiles);
-
-  const report = generateMarkdownReport(mcpResults, readmeResults, duplicateResults);
-
-  if (output === 'markdown') {
-    fs.writeFileSync(path.join(projectPath, 'mcp-audit-report.md'), report);
-    console.log('✅ Audit complete: mcp-audit-report.md generated');
-  } else {
-    fs.writeFileSync(path.join(projectPath, 'mcp-audit-report.json'), JSON.stringify({
-      mcpResults,
-      readmeResults,
-      duplicateResults
-    }, null, 2));
-    console.log('✅ Audit complete: mcp-audit-report.json generated');
-  }
-} 
-
-// CLI Entry
-if (require.main === module) {
-  const args = process.argv.slice(2);
-  runAudit({
-    projectPath: args[0] || process.cwd(),
-    output: args.includes('--json') ? 'json' : 'markdown'
+  const report = generateReport({
+    format: outputFormat,
+    mcpResults,
+    goalResults,
+    duplicates,
   });
-}
+
+  const outputFile = `mcp-audit-report.${outputFormat === 'json' ? 'json' : 'md'}`;
+  require('fs').writeFileSync(outputFile, report);
+  console.log(`✅ Audit complete. Output written to ${outputFile}`);
+})();
+
+/*
+=======================================
+📘 MCP-Audit Usage Instructions
+=======================================
+
+🧪 To run the audit locally:
+
+1. Clone the MCP-Audit repository:
+   git clone https://github.com/awwbaw3/MCP-Audit.git
+   cd MCP-Audit
+   npm install
+
+2. Run audit on another project folder:
+   npx ts-node src/index.ts /path/to/target/project
+
+3. To generate JSON instead of Markdown:
+   npx ts-node src/index.ts /path/to/project --json
+
+🧰 To use as a GitHub Action in another repo:
+
+Add this to `.github/workflows/mcp-audit.yml` in your target project:
+
+name: MCP Audit
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+      - name: Clone MCP-Audit Tool
+        run: |
+          git clone https://github.com/awwbaw3/MCP-Audit.git
+          cd MCP-Audit && npm install
+      - name: Run MCP Audit
+        run: |
+          npx ts-node MCP-Audit/src/index.ts .
+      - name: Upload Audit Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: mcp-audit-report
+          path: mcp-audit-report.md
+*/
